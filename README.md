@@ -83,14 +83,14 @@ npm run cli refresh -- --data-dir /path/to/data
 
 Available language codes: `en`, `fr`, `de`, `nl`.
 
-### Import Times (approximate, M3 Mac via Docker)
+### Import Times (approximate, M3 Mac via Docker, --monolingual)
 
-| Language | Compressed | Entries    | Time    |
-|----------|-----------|------------|---------|
-| Dutch    | 118 MB    | ~1.1M      | ~12 min |
-| German   | 280 MB    | ~1.3M      | ~17 min |
-| French   | 663 MB    | ~4.6M      | ~55 min |
-| English  | 2.4 GB    | ~8M+       | ~2-3 hr |
+| Language | Compressed | Entries | Senses | Time   |
+|----------|-----------|---------|--------|--------|
+| Dutch    | 118 MB    | 638K    | 741K   | ~8 min |
+| German   | 280 MB    | 975K    | 3.1M   | ~14 min|
+| French   | 663 MB    | 2.1M    | 2.6M   | ~30 min|
+| English  | 2.4 GB    | 1.45M   | 1.74M  | ~29 min|
 
 ## Running the API
 
@@ -114,35 +114,129 @@ npm start
 curl http://localhost:3000/health
 ```
 
-### GET /entries/:lemma
+### GET /editions
 
-Exact lookup by lemma. Also matches inflected forms (e.g., searching "huisje" finds "huis"). Returns all matching entries with their senses.
+List all available Wiktionary editions.
 
 ```bash
-curl http://localhost:3000/entries/chat
-curl "http://localhost:3000/entries/chat?lang=fr&pos=noun"
-curl "http://localhost:3000/entries/huis?lang=nl"
+curl http://localhost:3000/editions
+# { "editions": ["de", "en", "fr", "nl"] }
 ```
 
-Query parameters: `lang` (default: `fr`), `pos`.
+### GET /editions/:edition/languages
+
+List all languages available in a given edition.
+
+```bash
+curl http://localhost:3000/editions/nl/languages
+# { "languages": ["nl"] }
+```
+
+### GET /editions/:edition/languages/:lang/entries
+
+Browse, search, or filter entries within an edition and language. Always returns a paginated collection with `meta` and `links`.
+
+```bash
+# Browse alphabetically (paginated)
+curl "http://localhost:3000/editions/nl/languages/nl/entries?limit=20"
+
+# Exact lookup by lemma
+curl "http://localhost:3000/editions/fr/languages/fr/entries?lemma=maison"
+
+# Prefix search
+curl "http://localhost:3000/editions/nl/languages/nl/entries?q=hui&limit=10"
+```
+
+Query parameters: `lemma` (exact match), `q` (prefix search), `pos`, `limit` (max 100, default 20), `offset`.
+
+Response:
+
+```json
+{
+  "meta": { "limit": 20, "offset": 0 },
+  "links": {
+    "self": "http://localhost:3000/editions/nl/languages/nl/entries?limit=20&offset=0",
+    "next": "http://localhost:3000/editions/nl/languages/nl/entries?limit=20&offset=20",
+    "prev": null,
+    "start": "http://localhost:3000/editions/nl/languages/nl/entries?limit=20"
+  },
+  "results": [
+    {
+      "href": "http://localhost:3000/editions/nl/languages/nl/entries/huis",
+      "lemma": "huis",
+      "langCode": "nl",
+      "langName": "Nederlands",
+      "sourceEdition": "nl",
+      "formOf": [],
+      "lexemes": [
+        {
+          "pos": "noun",
+          "etymologyIndex": 0,
+          "forms": [
+            { "form": "huizen", "tags": ["plural"], "href": "http://localhost:3000/editions/nl/languages/nl/entries/huizen" }
+          ],
+          "senses": [
+            {
+              "gloss": "gebouw bestemd om in te wonen",
+              "tags": [],
+              "topics": ["architecture"],
+              "categories": ["Bouwkunde_in_het_Nederlands"],
+              "examples": ["Zij wonen in een groot huis."]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+### GET /editions/:edition/languages/:lang/entries/:lemma
+
+Get a single dictionary entry by lemma (singleton). Includes `formOf` back-links to parent entries with `formAs` relationship tags, and `href` on each form for forward navigation.
+
+```bash
+curl "http://localhost:3000/editions/nl/languages/nl/entries/huis"
+curl "http://localhost:3000/editions/nl/languages/nl/entries/huisje"
+```
+
+The `formOf` field shows parent entries this lemma is a form of:
+
+```json
+{
+  "href": "http://localhost:3000/editions/nl/languages/nl/entries/huisje",
+  "lemma": "huisje",
+  "formOf": [
+    {
+      "lemma": "huis",
+      "pos": "noun",
+      "formAs": ["diminutive", "singular"],
+      "href": "http://localhost:3000/editions/nl/languages/nl/entries/huis"
+    }
+  ],
+  "lexemes": [...]
+}
+```
+
+Append `?skos` to export as SKOS Turtle (one `skos:Concept` per sense):
+
+```bash
+curl "http://localhost:3000/editions/nl/languages/nl/entries/huis?skos"
+# Content-Type: text/turtle
+```
 
 ### GET /search
 
-Prefix search across lemmas and inflected forms.
+Cross-edition prefix search.
 
 ```bash
 curl "http://localhost:3000/search?q=mais&lang=fr&limit=10"
+curl "http://localhost:3000/search?q=house&edition=en&limit=5"
 ```
 
-Query parameters: `q` (required), `lang`, `pos`, `limit` (max 100), `offset`.
+Query parameters: `q` (required), `edition`, `lang`, `pos`, `limit` (max 100), `offset`.
 
-### GET /senses/:id
-
-Get a single sense with its parent entry.
-
-```bash
-curl http://localhost:3000/senses/42
-```
+Returns paginated results with `meta` and `links`, same structure as the entries collection.
 
 ## Testing
 
