@@ -326,5 +326,39 @@ describe('toSkosTurtle', () => {
       expect(turtle).toContain('skos:hiddenLabel "housen"@en');
       expect(turtle).not.toContain('skos:altLabel "housen"@en');
     });
+
+    it('subtracts inherited formOf tags when classifying own forms', () => {
+      // "huisje" is a diminutive of "huis". Its form "huisjes" has tags
+      // ["diminutive", "plural"] — but the "diminutive" is inherited context,
+      // not a new derivation. "huisjes" is just the plural of "huisje".
+      const entry = makeEntry({
+        lemma: 'huisje', langCode: 'nl',
+        formOf: [{ lemma: 'huis', pos: 'noun', formAs: ['diminutive', 'singular'] }],
+        lexemes: [{
+          pos: 'noun', etymologyIndex: 0,
+          forms: [{ form: 'huisjes', tags: ['diminutive', 'plural'] }],
+          senses: [{ gloss: 'Klein huis', tags: [], topics: [], categories: [], examples: [] }],
+        }],
+      });
+      const turtle = toSkosTurtle(entry, baseUrl);
+      expect(turtle).toContain('skos:hiddenLabel "huisjes"@nl');
+      expect(turtle).not.toContain('skos:altLabel "huisjes"@nl');
+    });
+
+    it('still promotes forms with non-inherited derivational tags', () => {
+      // Entry is a diminutive of something, but has a form that is
+      // ALSO an abbreviation — abbreviation is not inherited, so it promotes.
+      const entry = makeEntry({
+        lemma: 'huisje', langCode: 'nl',
+        formOf: [{ lemma: 'huis', pos: 'noun', formAs: ['diminutive'] }],
+        lexemes: [{
+          pos: 'noun', etymologyIndex: 0,
+          forms: [{ form: 'hsj', tags: ['diminutive', 'abbreviation'] }],
+          senses: [{ gloss: 'Klein huis', tags: [], topics: [], categories: [], examples: [] }],
+        }],
+      });
+      const turtle = toSkosTurtle(entry, baseUrl);
+      expect(turtle).toContain('skos:altLabel "hsj"@nl');
+    });
   });
 });

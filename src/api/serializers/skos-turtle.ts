@@ -47,13 +47,21 @@ const ALT_LABEL_TAGS: ReadonlySet<string> = new Set([
 
 /**
  * Classify whether a form's tags indicate a lexical variant (altLabel)
- * or an inflectional form (hiddenLabel). If ANY tag is derivational,
- * the form qualifies as altLabel — e.g. ["diminutive", "singular"]
- * is alt because the diminutive tag signals a different lexeme.
- * Empty tags default to 'hidden' (conservative).
+ * or an inflectional form (hiddenLabel). If ANY tag is derivational
+ * AND not in the inherited set, the form qualifies as altLabel.
+ *
+ * inheritedTags: tags from entry.formOf[].formAs that describe the entry's
+ * own relationship to its parent. These are context, not a new derivational
+ * step. E.g. "huisje" (diminutive of "huis") has form "huisjes" tagged
+ * ["diminutive", "plural"] — the "diminutive" is inherited and should not
+ * promote "huisjes" to altLabel on the "huisje" concept.
+ *
+ * Empty effective tags default to 'hidden' (conservative).
  */
-function classifyFormTags(tags: string[]): 'alt' | 'hidden' {
-  return tags.some((t) => ALT_LABEL_TAGS.has(t)) ? 'alt' : 'hidden';
+function classifyFormTags(tags: string[], inheritedTags?: ReadonlySet<string>): 'alt' | 'hidden' {
+  return tags.some((t) => ALT_LABEL_TAGS.has(t) && (!inheritedTags || !inheritedTags.has(t)))
+    ? 'alt'
+    : 'hidden';
 }
 
 export function toSkosTurtle(entry: DictionaryEntry, baseUrl: string): string {
@@ -111,11 +119,16 @@ export function toSkosTurtle(entry: DictionaryEntry, baseUrl: string): string {
       const labelsByKey = new Map<string, { form: string; type: 'alt' | 'hidden' }>();
       const lemmaKey = entry.lemma.toLowerCase();
 
+      // Tags inherited from the entry's own formOf relationships — these
+      // describe the entry's lineage (e.g. "huisje" is a diminutive of "huis"),
+      // not a new derivational step for its own forms.
+      const inheritedTags = new Set(entry.formOf.flatMap((p) => p.formAs));
+
       // Forward: inflected/derived forms of this lexeme
       for (const f of lex.forms) {
         const key = f.form.toLowerCase();
         if (key === lemmaKey) continue;
-        const cls = classifyFormTags(f.tags);
+        const cls = classifyFormTags(f.tags, inheritedTags);
         const prev = labelsByKey.get(key);
         if (!prev || (cls === 'alt' && prev.type === 'hidden')) {
           labelsByKey.set(key, { form: f.form, type: cls });
