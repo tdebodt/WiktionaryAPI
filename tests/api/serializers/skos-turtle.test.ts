@@ -172,4 +172,159 @@ describe('toSkosTurtle', () => {
     expect(turtle).toContain('#noun-0-s1');
     expect(turtle).toContain('#verb-1-s0');
   });
+
+  describe('altLabel / hiddenLabel', () => {
+    it('adds inflectional forms as skos:hiddenLabel', () => {
+      const entry = makeEntry({
+        lexemes: [{
+          pos: 'noun', etymologyIndex: 0,
+          forms: [
+            { form: 'houses', tags: ['plural'] },
+            { form: 'housing', tags: ['gerund'] },
+          ],
+          senses: [{ gloss: 'A building', tags: [], topics: [], categories: [], examples: [] }],
+        }],
+      });
+      const turtle = toSkosTurtle(entry, baseUrl);
+      expect(turtle).toContain('skos:hiddenLabel "houses"@en');
+      expect(turtle).toContain('skos:hiddenLabel "housing"@en');
+      expect(turtle).not.toContain('skos:altLabel "houses"@en');
+    });
+
+    it('adds derivational forms as skos:altLabel', () => {
+      const entry = makeEntry({
+        lemma: 'huis', langCode: 'nl',
+        lexemes: [{
+          pos: 'noun', etymologyIndex: 0,
+          forms: [
+            { form: 'huisje', tags: ['diminutive', 'singular'] },
+            { form: 'huisjes', tags: ['diminutive', 'plural'] },
+          ],
+          senses: [{ gloss: 'Een gebouw', tags: [], topics: [], categories: [], examples: [] }],
+        }],
+      });
+      const turtle = toSkosTurtle(entry, baseUrl);
+      expect(turtle).toContain('skos:altLabel "huisje"@nl');
+      expect(turtle).toContain('skos:altLabel "huisjes"@nl');
+    });
+
+    it('does not add self as label', () => {
+      const entry = makeEntry({
+        lexemes: [{
+          pos: 'noun', etymologyIndex: 0,
+          forms: [{ form: 'house', tags: ['canonical'] }],
+          senses: [{ gloss: 'A building', tags: [], topics: [], categories: [], examples: [] }],
+        }],
+      });
+      const turtle = toSkosTurtle(entry, baseUrl);
+      expect(turtle).not.toContain('skos:altLabel "house"@en');
+      expect(turtle).not.toContain('skos:hiddenLabel "house"@en');
+    });
+
+    it('adds formOf parent as skos:hiddenLabel for inflectional relationship', () => {
+      const entry = makeEntry({
+        lemma: 'houses',
+        formOf: [{ lemma: 'house', pos: 'noun', formAs: ['plural'] }],
+      });
+      const turtle = toSkosTurtle(entry, baseUrl);
+      expect(turtle).toContain('skos:hiddenLabel "house"@en');
+      expect(turtle).not.toContain('skos:altLabel "house"@en');
+    });
+
+    it('adds formOf parent as skos:altLabel for derivational relationship', () => {
+      const entry = makeEntry({
+        lemma: 'huisje', langCode: 'nl',
+        formOf: [{ lemma: 'huis', pos: 'noun', formAs: ['diminutive', 'singular'] }],
+        lexemes: [{
+          pos: 'noun', etymologyIndex: 0, forms: [],
+          senses: [{ gloss: 'Verkleinwoord van huis', tags: [], topics: [], categories: [], examples: [] }],
+        }],
+      });
+      const turtle = toSkosTurtle(entry, baseUrl);
+      expect(turtle).toContain('skos:altLabel "huis"@nl');
+    });
+
+    it('deduplicates labels — alt wins over hidden for same form', () => {
+      const entry = makeEntry({
+        lemma: 'huisje', langCode: 'nl',
+        formOf: [{ lemma: 'huis', pos: 'noun', formAs: ['diminutive'] }],
+        lexemes: [{
+          pos: 'noun', etymologyIndex: 0,
+          forms: [{ form: 'huis', tags: ['base-form'] }],
+          senses: [{ gloss: 'Klein huis', tags: [], topics: [], categories: [], examples: [] }],
+        }],
+      });
+      const turtle = toSkosTurtle(entry, baseUrl);
+      const altMatches = turtle.match(/skos:altLabel "huis"@nl/g);
+      expect(altMatches).toHaveLength(1);
+      expect(turtle).not.toContain('skos:hiddenLabel "huis"@nl');
+    });
+
+    it('treats forms with empty tags as hiddenLabel (conservative)', () => {
+      const entry = makeEntry({
+        lexemes: [{
+          pos: 'noun', etymologyIndex: 0,
+          forms: [{ form: 'housen', tags: [] }],
+          senses: [{ gloss: 'A building', tags: [], topics: [], categories: [], examples: [] }],
+        }],
+      });
+      const turtle = toSkosTurtle(entry, baseUrl);
+      expect(turtle).toContain('skos:hiddenLabel "housen"@en');
+    });
+
+    it('language-tags labels with entry langCode', () => {
+      const entry = makeEntry({
+        langCode: 'nl',
+        lexemes: [{
+          pos: 'noun', etymologyIndex: 0,
+          forms: [{ form: 'huizen', tags: ['plural'] }],
+          senses: [{ gloss: 'Een gebouw', tags: [], topics: [], categories: [], examples: [] }],
+        }],
+      });
+      const turtle = toSkosTurtle(entry, baseUrl);
+      expect(turtle).toContain('"huizen"@nl');
+    });
+
+    it('adds labels to every concept in the entry', () => {
+      const entry = makeEntry({
+        lexemes: [{
+          pos: 'noun', etymologyIndex: 0,
+          forms: [{ form: 'houses', tags: ['plural'] }],
+          senses: [
+            { gloss: 'A building', tags: [], topics: [], categories: [], examples: [] },
+            { gloss: 'A legislative body', tags: [], topics: [], categories: [], examples: [] },
+          ],
+        }],
+      });
+      const turtle = toSkosTurtle(entry, baseUrl);
+      const matches = turtle.match(/skos:hiddenLabel "houses"@en/g);
+      expect(matches).toHaveLength(2);
+    });
+
+    it('classifies abbreviation as altLabel', () => {
+      const entry = makeEntry({
+        lexemes: [{
+          pos: 'noun', etymologyIndex: 0,
+          forms: [{ form: 'govt', tags: ['abbreviation'] }],
+          senses: [{ gloss: 'A governing body', tags: [], topics: [], categories: [], examples: [] }],
+        }],
+        lemma: 'government',
+      });
+      const turtle = toSkosTurtle(entry, baseUrl);
+      expect(turtle).toContain('skos:altLabel "govt"@en');
+    });
+
+    it('does not promote register-only tags to altLabel', () => {
+      const entry = makeEntry({
+        lexemes: [{
+          pos: 'noun', etymologyIndex: 0,
+          forms: [{ form: 'housen', tags: ['archaic', 'plural'] }],
+          senses: [{ gloss: 'A building', tags: [], topics: [], categories: [], examples: [] }],
+        }],
+      });
+      const turtle = toSkosTurtle(entry, baseUrl);
+      expect(turtle).toContain('skos:hiddenLabel "housen"@en');
+      expect(turtle).not.toContain('skos:altLabel "housen"@en');
+    });
+  });
 });
