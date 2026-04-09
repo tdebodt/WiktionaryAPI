@@ -1,9 +1,9 @@
 import { Pool, PoolClient } from 'pg';
 import { Entry, NewEntry } from '../../domain/models/entry';
-import { normalizeLemma } from '../../lib/normalize';
+import { normalizeLemma, generateEntryId } from '../../lib/normalize';
 
-const ENTRY_COLUMNS = `e.id, e.lemma, e.lemma_normalized, e.lang_code, e.lang_name, e.pos,
-              e.etymology_index, e.source_word, e.forms, e.created_at, e.updated_at`;
+const ENTRY_COLUMNS = `e.id, e.stable_id, e.lemma, e.lemma_normalized, e.lang_code, e.lang_name, e.pos,
+              e.etymology_index, e.source_edition, e.source_word, e.forms, e.created_at, e.updated_at`;
 
 export class EntryRepository {
   constructor(private pool: Pool) {}
@@ -14,16 +14,19 @@ export class EntryRepository {
    */
   async upsert(entry: NewEntry, client?: PoolClient): Promise<number> {
     const conn = client ?? this.pool;
+    const stableId = generateEntryId(entry.lemmaNormalized, entry.langCode, entry.sourceEdition);
+
     const { rows } = await conn.query<{ id: number }>(
       `INSERT INTO entries
-         (lemma, lemma_normalized, lang_code, lang_name, pos, etymology_index, source_word, forms)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       ON CONFLICT (lemma_normalized, lang_code, pos, etymology_index)
+         (lemma, lemma_normalized, lang_code, lang_name, pos, etymology_index, source_edition, source_word, forms, stable_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       ON CONFLICT (lemma_normalized, lang_code, pos, etymology_index, source_edition)
        DO UPDATE SET
          lemma = EXCLUDED.lemma,
          lang_name = EXCLUDED.lang_name,
          source_word = EXCLUDED.source_word,
          forms = EXCLUDED.forms,
+         stable_id = EXCLUDED.stable_id,
          updated_at = NOW()
        RETURNING id`,
       [
@@ -33,8 +36,10 @@ export class EntryRepository {
         entry.langName,
         entry.pos,
         entry.etymologyIndex,
+        entry.sourceEdition,
         entry.sourceWord,
         entry.forms ? JSON.stringify(entry.forms) : null,
+        stableId,
       ],
     );
 
@@ -56,6 +61,7 @@ export class EntryRepository {
     lemma: string,
     langCode?: string,
     pos?: string,
+    edition?: string,
   ): Promise<Entry[]> {
     const normalized = normalizeLemma(lemma);
 
@@ -69,6 +75,10 @@ export class EntryRepository {
     if (pos) {
       params.push(pos);
       filters.push(`e.pos = $${params.length}`);
+    }
+    if (edition) {
+      params.push(edition);
+      filters.push(`e.source_edition = $${params.length}`);
     }
 
     const filterClause = filters.length > 0 ? 'AND ' + filters.join(' AND ') : '';
@@ -94,6 +104,7 @@ export class EntryRepository {
     query: string,
     langCode?: string,
     pos?: string,
+    edition?: string,
     limit: number = 20,
     offset: number = 0,
   ): Promise<Entry[]> {
@@ -109,6 +120,10 @@ export class EntryRepository {
     if (pos) {
       params.push(pos);
       filters.push(`e.pos = $${params.length}`);
+    }
+    if (edition) {
+      params.push(edition);
+      filters.push(`e.source_edition = $${params.length}`);
     }
 
     params.push(limit);
@@ -143,6 +158,68 @@ export class EntryRepository {
     return rows.length > 0 ? rowToEntry(rows[0]) : null;
   }
 
+  async findByStableId(stableId: string): Promise<Entry[]> {
+    const { rows } = await this.pool.query(
+      `SELECT ${ENTRY_COLUMNS} FROM entries e WHERE e.stable_id = $1
+       ORDER BY e.etymology_index, e.pos`,
+      [stableId],
+    );
+    return rows.map(rowToEntry);
+  }
+
+  async findParentEntries(
+    formNormalized: string,
+    langCode: string,
+    edition: string,
+  ): Promise<Array<Entry & { formTags: string[] }>> {
+    const { rows } = await this.pool.query(
+      `SELECT ${ENTRY_COLUMNS}, ef.tags AS form_tags
+       FROM entries e
+       JOIN entry_forms ef ON ef.entry_id = e.id
+       WHERE ef.form_normalized = $1
+         AND e.lang_code = $2
+         AND e.source_edition = $3
+       ORDER BY e.lemma_normalized, e.pos, e.etymology_index`,
+      [formNormalized, langCode, edition],
+    );
+    return rows.map((row) => ({
+      ...rowToEntry(row),
+      formTags: (row.form_tags as string[]) ?? [],
+    }));
+  }
+
+  async browse(
+    langCode: string,
+    edition: string,
+    limit: number = 20,
+    offset: number = 0,
+  ): Promise<Entry[]> {
+    const { rows } = await this.pool.query(
+      `SELECT ${ENTRY_COLUMNS}
+       FROM entries e
+       WHERE e.lang_code = $1 AND e.source_edition = $2
+       ORDER BY e.lemma_normalized, e.pos, e.etymology_index
+       LIMIT $3 OFFSET $4`,
+      [langCode, edition, limit, offset],
+    );
+    return rows.map(rowToEntry);
+  }
+
+  async listEditions(): Promise<string[]> {
+    const { rows } = await this.pool.query(
+      `SELECT DISTINCT source_edition FROM entries ORDER BY source_edition`,
+    );
+    return rows.map((r) => r.source_edition);
+  }
+
+  async listLanguages(edition: string): Promise<string[]> {
+    const { rows } = await this.pool.query(
+      `SELECT DISTINCT lang_code FROM entries WHERE source_edition = $1 ORDER BY lang_code`,
+      [edition],
+    );
+    return rows.map((r) => r.lang_code);
+  }
+
   async totalCount(): Promise<number> {
     const { rows } = await this.pool.query(
       'SELECT COUNT(*)::int AS count FROM entries',
@@ -161,12 +238,14 @@ export class EntryRepository {
 function rowToEntry(row: Record<string, unknown>): Entry {
   return {
     id: row.id as number,
+    stableId: row.stable_id as string,
     lemma: row.lemma as string,
     lemmaNormalized: row.lemma_normalized as string,
     langCode: row.lang_code as string,
     langName: row.lang_name as string | null,
     pos: row.pos as string,
     etymologyIndex: row.etymology_index as number,
+    sourceEdition: row.source_edition as string,
     sourceWord: row.source_word as string | null,
     forms: row.forms as Entry['forms'],
     createdAt: row.created_at as Date,

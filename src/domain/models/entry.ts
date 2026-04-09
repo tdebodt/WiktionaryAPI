@@ -5,12 +5,14 @@ export interface EntryForm {
 
 export interface Entry {
   id: number;
+  stableId: string;
   lemma: string;
   lemmaNormalized: string;
   langCode: string;
   langName: string | null;
   pos: string;
   etymologyIndex: number;
+  sourceEdition: string;
   sourceWord: string | null;
   forms: EntryForm[] | null;
   createdAt: Date;
@@ -24,6 +26,7 @@ export interface NewEntry {
   langName: string | null;
   pos: string;
   etymologyIndex: number;
+  sourceEdition: string;
   sourceWord: string | null;
   forms: EntryForm[] | null;
   rawEntryJson: Record<string, unknown> | null;

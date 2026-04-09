@@ -22,7 +22,7 @@ export interface MappedSense {
  *
  * Returns null if the record is unusable (no word or no valid senses).
  */
-export function mapKaikkiRecord(record: KaikkiRecord): MappedEntry | null {
+export function mapKaikkiRecord(record: KaikkiRecord, sourceEdition: string): MappedEntry | null {
   const word = record.word?.trim();
   if (!word) return null;
 
@@ -39,6 +39,7 @@ export function mapKaikkiRecord(record: KaikkiRecord): MappedEntry | null {
     langName: record.lang ?? null,
     pos: record.pos ?? '',
     etymologyIndex: record.etymology_number ?? 0,
+    sourceEdition,
     sourceWord: record.word,
     forms,
     rawEntryJson: rawRecord,

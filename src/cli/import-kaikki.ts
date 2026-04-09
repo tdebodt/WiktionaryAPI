@@ -18,7 +18,12 @@ export interface ImportStats {
   durationMs: number;
 }
 
-export async function importKaikki(filePath: string): Promise<ImportStats> {
+export interface ImportOptions {
+  sourceEdition: string;
+  monolingualOnly?: boolean;
+}
+
+export async function importKaikki(filePath: string, options: ImportOptions): Promise<ImportStats> {
   const entryRepo = new EntryRepository(pool);
   const senseRepo = new SenseRepository(pool);
 
@@ -34,7 +39,9 @@ export async function importKaikki(filePath: string): Promise<ImportStats> {
   const startTime = Date.now();
   let batch: MappedEntry[] = [];
 
-  logger.info({ filePath }, 'Starting import');
+  const { sourceEdition, monolingualOnly } = options;
+
+  logger.info({ filePath, sourceEdition, monolingualOnly }, 'Starting import');
 
   for await (const line of createJsonlReader(filePath)) {
     stats.totalLines++;
@@ -69,8 +76,14 @@ export async function importKaikki(filePath: string): Promise<ImportStats> {
       continue;
     }
 
+    // Skip non-monolingual entries if requested
+    if (monolingualOnly && parsed.data.lang_code !== sourceEdition) {
+      stats.totalSkipped++;
+      continue;
+    }
+
     // Map to domain model
-    const mapped = mapKaikkiRecord(parsed.data);
+    const mapped = mapKaikkiRecord(parsed.data, sourceEdition);
     if (!mapped) {
       stats.totalSkipped++;
       continue;

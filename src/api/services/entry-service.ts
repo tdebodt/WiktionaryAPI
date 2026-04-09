@@ -1,32 +1,49 @@
 import { Pool } from 'pg';
 import { EntryRepository } from '../../db/repositories/entry-repository';
 import { SenseRepository } from '../../db/repositories/sense-repository';
-import { NotFoundError } from '../../lib/errors';
-
-export interface FormResponse {
-  form: string;
-  tags: string[];
-}
-
-export interface EntryWithSenses {
-  entryId: number;
-  lemma: string;
-  langCode: string;
-  langName: string | null;
-  pos: string | null;
-  forms: FormResponse[];
-  senses: SenseResponse[];
-}
+import { Entry } from '../../domain/models/entry';
+import { normalizeLemma } from '../../lib/normalize';
 
 export interface SenseResponse {
-  senseId: number;
-  senseIndex: number;
   gloss: string;
   tags: string[];
   topics: string[];
   categories: string[];
   examples: string[];
 }
+
+export interface FormResponse {
+  form: string;
+  tags: string[];
+}
+
+export interface LexemeResponse {
+  pos: string | null;
+  etymologyIndex: number;
+  forms: FormResponse[];
+  senses: SenseResponse[];
+}
+
+export interface FormOfLink {
+  lemma: string;
+  pos: string | null;
+  formAs: string[];
+}
+
+export interface DictionaryEntry {
+  lemma: string;
+  langCode: string;
+  langName: string | null;
+  sourceEdition: string;
+  formOf: FormOfLink[];
+  lexemes: LexemeResponse[];
+}
+
+type SensesMap = Map<number, Array<{
+  id: number; senseIndex: number; gloss: string;
+  tags: string[] | null; topics: string[] | null;
+  categories: string[] | null; examplesText: string[] | null;
+}>>;
 
 export class EntryService {
   private entryRepo: EntryRepository;
@@ -37,89 +54,114 @@ export class EntryService {
     this.senseRepo = new SenseRepository(pool);
   }
 
-  async getByLemma(
-    lemma: string,
-    langCode?: string,
+  async listEditions(): Promise<string[]> {
+    return this.entryRepo.listEditions();
+  }
+
+  async listLanguages(edition: string): Promise<string[]> {
+    return this.entryRepo.listLanguages(edition);
+  }
+
+  async getEntries(
+    edition: string,
+    langCode: string,
+    lemma?: string,
+    q?: string,
     pos?: string,
-  ): Promise<EntryWithSenses[]> {
-    const entries = await this.entryRepo.findByNormalizedLemma(
-      lemma,
-      langCode,
-      pos,
-    );
-    if (entries.length === 0) return [];
+    limit: number = 20,
+    offset: number = 0,
+  ): Promise<{ results: DictionaryEntry[]; hasMore: boolean }> {
+    let entries: Entry[];
 
-    const sensesMap = await this.senseRepo.findByEntryIds(
-      entries.map((e) => e.id),
-    );
+    if (lemma) {
+      entries = await this.entryRepo.findByNormalizedLemma(lemma, langCode, pos, edition);
+      return { results: await this.groupEntries(entries), hasMore: false };
+    } else if (q) {
+      entries = await this.entryRepo.searchByPrefix(q, langCode, pos, edition, limit + 1, offset);
+    } else {
+      entries = await this.entryRepo.browse(langCode, edition, limit + 1, offset);
+    }
 
-    return entries.map((entry) => toEntryWithSenses(entry, sensesMap));
+    const hasMore = entries.length > limit;
+    if (hasMore) entries = entries.slice(0, limit);
+    return { results: await this.groupEntries(entries), hasMore };
+  }
+
+  async getEntry(
+    edition: string,
+    langCode: string,
+    lemma: string,
+  ): Promise<DictionaryEntry | null> {
+    const normalized = normalizeLemma(lemma);
+    const allEntries = await this.entryRepo.findByNormalizedLemma(lemma, langCode, undefined, edition);
+    // Singleton: only return exact lemma matches, not form matches
+    const entries = allEntries.filter((e) => e.lemmaNormalized === normalized);
+    if (entries.length === 0) return null;
+
+    const sensesMap = await this.senseRepo.findByEntryIds(entries.map((e) => e.id));
+    const entry = toDictionaryEntry(entries, sensesMap);
+
+    // Find parent entries this lemma is a form of
+    const parents = await this.entryRepo.findParentEntries(normalized, langCode, edition);
+    entry.formOf = parents
+      .filter((p) => p.lemmaNormalized !== normalized)
+      .map((p) => ({ lemma: p.lemma, pos: p.pos || null, formAs: p.formTags }));
+
+    return entry;
   }
 
   async search(
-    query: string,
+    q: string,
+    edition?: string,
     langCode?: string,
     pos?: string,
     limit: number = 20,
     offset: number = 0,
-  ): Promise<EntryWithSenses[]> {
-    const entries = await this.entryRepo.searchByPrefix(
-      query,
-      langCode,
-      pos,
-      limit,
-      offset,
-    );
-    if (entries.length === 0) return [];
-
-    const sensesMap = await this.senseRepo.findByEntryIds(
-      entries.map((e) => e.id),
-    );
-
-    return entries.map((entry) => toEntryWithSenses(entry, sensesMap));
+  ): Promise<{ results: DictionaryEntry[]; hasMore: boolean }> {
+    let entries = await this.entryRepo.searchByPrefix(q, langCode, pos, edition, limit + 1, offset);
+    const hasMore = entries.length > limit;
+    if (hasMore) entries = entries.slice(0, limit);
+    return { results: await this.groupEntries(entries), hasMore };
   }
 
-  async getSenseById(
-    senseId: number,
-  ): Promise<{ sense: SenseResponse; entry: EntryWithSenses }> {
-    const sense = await this.senseRepo.findById(senseId);
-    if (!sense) throw new NotFoundError(`Sense ${senseId} not found`);
+  private async groupEntries(entries: Entry[]): Promise<DictionaryEntry[]> {
+    if (entries.length === 0) return [];
 
-    const entry = await this.entryRepo.findById(sense.entryId);
-    if (!entry) throw new NotFoundError(`Entry for sense ${senseId} not found`);
+    const sensesMap = await this.senseRepo.findByEntryIds(entries.map((e) => e.id));
 
-    const allSenses = await this.senseRepo.findByEntryId(entry.id);
-    const sensesMap = new Map([[entry.id, allSenses]]);
+    const grouped = new Map<string, Entry[]>();
+    for (const entry of entries) {
+      const key = `${entry.lemmaNormalized}:${entry.langCode}:${entry.sourceEdition}`;
+      const group = grouped.get(key);
+      if (group) {
+        group.push(entry);
+      } else {
+        grouped.set(key, [entry]);
+      }
+    }
 
-    return {
-      sense: {
-        senseId: sense.id,
-        senseIndex: sense.senseIndex,
-        gloss: sense.gloss,
-        tags: sense.tags ?? [],
-        topics: sense.topics ?? [],
-        categories: sense.categories ?? [],
-        examples: sense.examplesText ?? [],
-      },
-      entry: toEntryWithSenses(entry, sensesMap),
-    };
+    return Array.from(grouped.values()).map((rows) => toDictionaryEntry(rows, sensesMap));
   }
 }
 
-function toEntryWithSenses(
-  entry: { id: number; lemma: string; langCode: string; langName: string | null; pos: string; forms: Array<{ form: string; tags: string[] }> | null },
-  sensesMap: Map<number, Array<{ id: number; senseIndex: number; gloss: string; tags: string[] | null; topics: string[] | null; categories: string[] | null; examplesText: string[] | null }>>,
-): EntryWithSenses {
+function toDictionaryEntry(rows: Entry[], sensesMap: SensesMap): DictionaryEntry {
+  const first = rows[0];
   return {
-    entryId: entry.id,
-    lemma: entry.lemma,
-    langCode: entry.langCode,
-    langName: entry.langName,
-    pos: entry.pos || null, // convert '' back to null for API responses
+    lemma: first.lemma,
+    langCode: first.langCode,
+    langName: first.langName,
+    sourceEdition: first.sourceEdition,
+    formOf: [],
+    lexemes: rows.map((row) => toLexeme(row, sensesMap)),
+  };
+}
+
+function toLexeme(entry: Entry, sensesMap: SensesMap): LexemeResponse {
+  return {
+    pos: entry.pos || null,
+    etymologyIndex: entry.etymologyIndex,
     forms: entry.forms ?? [],
     senses: (sensesMap.get(entry.id) ?? []).map((s) => ({
-      senseId: s.id,
-      senseIndex: s.senseIndex,
       gloss: s.gloss,
       tags: s.tags ?? [],
       topics: s.topics ?? [],
