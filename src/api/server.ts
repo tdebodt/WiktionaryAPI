@@ -3,6 +3,8 @@ import { logger } from '../lib/logger';
 import { pool, closePool } from '../db/pool';
 import { createApp } from './app';
 
+const SHUTDOWN_TIMEOUT_MS = 10_000;
+
 const app = createApp(pool);
 
 const server = app.listen(config.port, () => {
@@ -11,8 +13,19 @@ const server = app.listen(config.port, () => {
 
 async function shutdown(): Promise<void> {
   logger.info('Shutting down...');
-  server.close();
+
+  const forceExit = setTimeout(() => {
+    logger.error('Shutdown timed out, forcing exit');
+    process.exit(1);
+  }, SHUTDOWN_TIMEOUT_MS);
+  forceExit.unref();
+
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  logger.info('HTTP server closed');
+
   await closePool();
+  logger.info('Database pool closed');
+
   process.exit(0);
 }
 

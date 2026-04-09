@@ -4,6 +4,10 @@ import { logger } from '../lib/logger';
 
 export const pool = new Pool({
   connectionString: config.databaseUrl,
+  max: config.dbPoolMax,
+  connectionTimeoutMillis: 5000,
+  idleTimeoutMillis: 30000,
+  statement_timeout: config.dbStatementTimeoutMs,
 });
 
 pool.on('error', (err) => {

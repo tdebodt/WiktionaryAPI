@@ -4,6 +4,7 @@ export function healthRoutes(): Router {
   const router = Router();
 
   router.get('/health', (_req, res) => {
+    res.set('Cache-Control', 'no-cache');
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
   });
 

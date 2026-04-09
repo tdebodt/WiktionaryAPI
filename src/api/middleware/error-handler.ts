@@ -4,7 +4,7 @@ import { logger } from '../../lib/logger';
 
 export function errorHandler(
   err: Error,
-  _req: Request,
+  req: Request,
   res: Response,
   _next: NextFunction,
 ): void {
@@ -15,7 +15,14 @@ export function errorHandler(
     return;
   }
 
-  logger.error({ err }, 'Unhandled error');
+  if (err instanceof SyntaxError && 'type' in err && (err as Record<string, unknown>).type === 'entity.parse.failed') {
+    res.status(400).json({
+      error: { code: 'BAD_REQUEST', message: 'Malformed JSON in request body' },
+    });
+    return;
+  }
+
+  logger.error({ err, method: req.method, url: req.originalUrl }, 'Unhandled error');
   res.status(500).json({
     error: { code: 'INTERNAL_ERROR', message: 'Internal server error' },
   });

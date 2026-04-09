@@ -17,14 +17,20 @@
     "infra:reset": "docker compose down -v && docker compose up -d"
   },
   "dependencies": {
+    "compression": "^1.8.1",
+    "cors": "^2.8.6",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
+    "express-rate-limit": "^8.3.2",
+    "helmet": "^8.1.0",
     "pg": "^8.13.1",
     "pino": "^9.6.0",
     "pino-http": "^10.4.0",
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@types/compression": "^1.8.1",
+    "@types/cors": "^2.8.19",
     "@types/express": "^4.17.21",
     "@types/pg": "^8.11.10",
     "@types/supertest": "^6.0.2",
