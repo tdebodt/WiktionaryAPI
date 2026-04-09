@@ -191,7 +191,7 @@ describe('toSkosTurtle', () => {
       expect(turtle).not.toContain('skos:altLabel "houses"@en');
     });
 
-    it('adds derivational forms as skos:altLabel', () => {
+    it('adds purely derivational forms as altLabel, inflected derivations as hiddenLabel', () => {
       const entry = makeEntry({
         lemma: 'huis', langCode: 'nl',
         lexemes: [{
@@ -204,8 +204,11 @@ describe('toSkosTurtle', () => {
         }],
       });
       const turtle = toSkosTurtle(entry, baseUrl);
+      // diminutive + singular → alt (singular is neutral)
       expect(turtle).toContain('skos:altLabel "huisje"@nl');
-      expect(turtle).toContain('skos:altLabel "huisjes"@nl');
+      // diminutive + plural → hidden (plural is inflectional, overrides diminutive)
+      expect(turtle).toContain('skos:hiddenLabel "huisjes"@nl');
+      expect(turtle).not.toContain('skos:altLabel "huisjes"@nl');
     });
 
     it('does not add self as label', () => {
@@ -345,9 +348,10 @@ describe('toSkosTurtle', () => {
       expect(turtle).not.toContain('skos:altLabel "huisjes"@nl');
     });
 
-    it('still promotes forms with non-inherited derivational tags', () => {
+    it('still promotes forms with non-inherited derivational tags and no inflection', () => {
       // Entry is a diminutive of something, but has a form that is
       // ALSO an abbreviation — abbreviation is not inherited, so it promotes.
+      // No inflectional tags present, so it qualifies as alt.
       const entry = makeEntry({
         lemma: 'huisje', langCode: 'nl',
         formOf: [{ lemma: 'huis', pos: 'noun', formAs: ['diminutive'] }],
@@ -359,6 +363,21 @@ describe('toSkosTurtle', () => {
       });
       const turtle = toSkosTurtle(entry, baseUrl);
       expect(turtle).toContain('skos:altLabel "hsj"@nl');
+    });
+
+    it('forces hiddenLabel when inflectional tag accompanies derivational tag', () => {
+      // "abbreviation" + "plural" → hidden, because plural overrides
+      const entry = makeEntry({
+        lexemes: [{
+          pos: 'noun', etymologyIndex: 0,
+          forms: [{ form: 'govts', tags: ['abbreviation', 'plural'] }],
+          senses: [{ gloss: 'A governing body', tags: [], topics: [], categories: [], examples: [] }],
+        }],
+        lemma: 'government',
+      });
+      const turtle = toSkosTurtle(entry, baseUrl);
+      expect(turtle).toContain('skos:hiddenLabel "govts"@en');
+      expect(turtle).not.toContain('skos:altLabel "govts"@en');
     });
   });
 });

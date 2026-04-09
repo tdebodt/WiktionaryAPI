@@ -20,8 +20,8 @@ function uri(value: string): string {
 /**
  * Tags that indicate a derivational/lexical relationship — the form is
  * a genuinely different word that names the same (or closely related) concept.
- * Everything else (inflectional morphology, register qualifiers) is treated
- * as hiddenLabel — useful for discovery but not a true alternative name.
+ * A form qualifies as altLabel ONLY when it has at least one of these tags
+ * and NO inflectional tags (see NEUTRAL_TAGS for the allowed companions).
  *
  * Conservative by design: when in doubt, a tag is NOT in this set.
  */
@@ -46,22 +46,45 @@ const ALT_LABEL_TAGS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Tags that neither promote to altLabel nor force hiddenLabel.
+ * These describe the unmarked/default grammatical state of a form
+ * (e.g. "singular" is not an inflection away from the base).
+ * Any tag NOT in ALT_LABEL_TAGS and NOT in NEUTRAL_TAGS is
+ * implicitly inflectional and forces hiddenLabel.
+ */
+const NEUTRAL_TAGS: ReadonlySet<string> = new Set([
+  'singular',
+  'canonical',
+  'base-form',
+  'standard',
+]);
+
+/**
  * Classify whether a form's tags indicate a lexical variant (altLabel)
- * or an inflectional form (hiddenLabel). If ANY tag is derivational
- * AND not in the inherited set, the form qualifies as altLabel.
+ * or an inflectional form (hiddenLabel).
  *
- * inheritedTags: tags from entry.formOf[].formAs that describe the entry's
- * own relationship to its parent. These are context, not a new derivational
- * step. E.g. "huisje" (diminutive of "huis") has form "huisjes" tagged
- * ["diminutive", "plural"] — the "diminutive" is inherited and should not
- * promote "huisjes" to altLabel on the "huisje" concept.
+ * A form is altLabel ONLY when:
+ *  1. At least one effective tag is derivational (in ALT_LABEL_TAGS)
+ *  2. Every other tag is either derivational or neutral — no inflectional tags
  *
+ * This means ["diminutive", "singular"] → alt (singular is neutral),
+ * but ["diminutive", "plural"] → hidden (plural is inflectional).
+ * A plural form is never altLabel, even if also tagged diminutive.
+ *
+ * inheritedTags: tags from entry.formOf[].formAs — subtracted before
+ * classification since they describe the entry's lineage, not a new step.
  * Empty effective tags default to 'hidden' (conservative).
  */
 function classifyFormTags(tags: string[], inheritedTags?: ReadonlySet<string>): 'alt' | 'hidden' {
-  return tags.some((t) => ALT_LABEL_TAGS.has(t) && (!inheritedTags || !inheritedTags.has(t)))
-    ? 'alt'
-    : 'hidden';
+  const effective = inheritedTags
+    ? tags.filter((t) => !inheritedTags.has(t))
+    : tags;
+
+  const hasDerivational = effective.some((t) => ALT_LABEL_TAGS.has(t));
+  if (!hasDerivational) return 'hidden';
+
+  const allClean = effective.every((t) => ALT_LABEL_TAGS.has(t) || NEUTRAL_TAGS.has(t));
+  return allClean ? 'alt' : 'hidden';
 }
 
 export function toSkosTurtle(entry: DictionaryEntry, baseUrl: string): string {
